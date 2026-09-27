@@ -1,0 +1,11 @@
+import "reflect-metadata";
+import { Container } from "inversify";
+import { MarketDataService } from "../services/marketdata.service.js";
+import { EurUsdWorker } from "../workers/eurusd.worker.js";
+import { Logger } from "../utils/logger.js";
+const container = new Container();
+// container.bind(TYPES.MarketDataService).to(MarketDataService).inSingletonScope();
+container.bind(MarketDataService).toSelf().inSingletonScope();
+container.bind(Logger).toSelf().inSingletonScope();
+container.bind(EurUsdWorker).toSelf().inSingletonScope();
+export { container };
