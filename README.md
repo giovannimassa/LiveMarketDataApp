@@ -61,3 +61,15 @@ Cancellare le app registrate su PM2:
 
 Visualizzare la lista delle app in running:
 - pm2 list
+
+# #############################################
+# ##### MODIFICHE App Trading Algoritmico #####
+# #############################################
+
+1. Individuare e calcolare gli indicatori che non hanno bisogno di storico per il calcolo ma basta il prezzo corrente (no EMA per esempio).
+2. Chiedere ad AI quali indicatori, in base a quelli individuati, vanno bene per l'algoritmo scelto (per il momento LightLGB) e se bisogna integrare/rimuovere alcuni o cambiare algoritmo.
+3. Migliorare la predizione ML. Capire come fare fine tuning dei parametri dell'algoritmo in base ai dati di traning idividuati.
+4. Utilizzo e collegamento ai dati di Metatrader5 invece che Duckascopy. Capire se è la strada giusta oppure trovare un provider diverso. Vedere se si può testare utilizzando API e se sia necessario aprire un conto demo.
+5. Chiedere quali statistiche sono utili per il backtesting e aggiungerle allo script.
+6. Creare una web app (capire se node va bene o altro linguaggio) per vedere graficamente le statistiche del backtesting.
+7. Aggiungere all'app la possibilità di live trading
