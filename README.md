@@ -49,11 +49,13 @@ loop infinito:
 # Installazione
 Utilizzeremo PM2 per gestire le applicazioni. Per installare PM2 avviare il seguente comando:
 - npm install -g pm2
-Il file **ecosystem.config.cjs** servirà come file di config di avvio delle app
+Il file **ecosystem.config.cjs** servirà come file di config di avvio delle app.
+*!Importante*: controllare il valore del parametro "interpreter" se è da cambiare. Chiedere eventualmente ad AI di controllare il path e verificare se sia corretto, altrimenti chiedere di trovare quello corretto.
 
 # Comandi
 
 Avviare le app con PM2:
+- $env:PYTHON_INTERPRETER="C:\Users\giova\AppData\Local\Programs\Python\Python311\python.exe"
 - pm2 start ecosystem.config.cjs --no-daemon
 
 Cancellare le app registrate su PM2:
@@ -73,3 +75,5 @@ Visualizzare la lista delle app in running:
 5. Chiedere quali statistiche sono utili per il backtesting e aggiungerle allo script.
 6. Creare una web app (capire se node va bene o altro linguaggio) per vedere graficamente le statistiche del backtesting.
 7. Aggiungere all'app la possibilità di live trading
+8. Renaming cartelle.
+    - duckascopy-ticks

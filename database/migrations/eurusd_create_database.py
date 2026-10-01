@@ -1,9 +1,11 @@
+from pathlib import Path
 import sqlite3
 
-DB_PATH = "C:\\Repos\\LiveMarketDataApp\\database\\eurusd-data.db"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DB_PATH = REPO_ROOT / "database" / "eurusd-data.db"
 
 def create_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(str(DB_PATH))
     cur = conn.cursor()
 
     # Tabella trades

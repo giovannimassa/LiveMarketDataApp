@@ -2,7 +2,7 @@ module.exports = {
   apps: [
     {
       name: "financial-data-polling",
-      script: ".\\dukascopy-ticks\\dist\\main.js",
+      script: ".\\apps\\data-engine\\dist\\main.js",
       //cron_restart: "*/1 * * * *",
       watch: false,
       autorestart: true,
@@ -12,8 +12,8 @@ module.exports = {
     },
     {
       name: "signal-engine",
-      script: ".\\signal-engine\\signal_engine.py",
-      interpreter: "C:\\Users\\giova\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+      script: ".\\apps\\signal-engine\\signal_engine.py",
+      interpreter: process.env.PYTHON_INTERPRETER || "python",
       //cron_restart: "*/5 * * * * *", // Restart every 5 seconds
       watch: false,
       autorestart: true,
