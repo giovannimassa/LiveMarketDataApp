@@ -77,3 +77,4 @@ Visualizzare la lista delle app in running:
 7. Aggiungere all'app la possibilità di live trading
 8. Renaming cartelle.
     - duckascopy-ticks
+9. Opzionale ma importante: refactoring del progetto

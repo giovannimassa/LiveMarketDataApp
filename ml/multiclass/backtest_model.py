@@ -15,7 +15,7 @@ SHARED_DIR = os.path.join(REPO_ROOT, "ml", "shared")
 if SHARED_DIR not in sys.path:
     sys.path.insert(0, SHARED_DIR)
 
-from features import FEATURE_COLUMNS
+from features import FEATURE_COLUMNS_LEGACY as FEATURE_COLUMNS
 
 # ============================================================
 # CONFIG

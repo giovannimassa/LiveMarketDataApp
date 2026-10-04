@@ -21,7 +21,7 @@ SHARED_DIR = os.path.join(REPO_ROOT, "ml", "shared")
 if SHARED_DIR not in sys.path:
     sys.path.insert(0, SHARED_DIR)
 
-from features import FEATURE_COLUMNS
+from features import FEATURE_COLUMNS, add_derived_features
 
 # ============================================================
 # CONFIG
@@ -122,8 +122,8 @@ def train_binary_model(X_train, y_train, X_valid, y_valid, model_path, model_nam
 # ============================================================
 if __name__ == "__main__":
 
-    train_df = pd.read_csv(TRAIN_CSV)
-    valid_df = pd.read_csv(VALID_CSV)
+    train_df = add_derived_features(pd.read_csv(TRAIN_CSV))
+    valid_df = add_derived_features(pd.read_csv(VALID_CSV))
 
     # print("target_long: ", train_df["target_long"].mean())
     # print("target_short: ", train_df["target_short"].mean())

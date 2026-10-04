@@ -1,4 +1,22 @@
-FEATURE_COLUMNS = [
+import numpy as np
+import pandas as pd
+
+TIMEFRAMES = ["m5", "m15", "h1"]
+
+# slopeEmaAtr e distanceEmaAtr sono derivate da add_derived_features
+TIMEFRAME_FEATURES = [
+    "rsi14", "atr14", "macdNorm", "slopeEmaAtr", "distanceEmaAtr", "roc", "stoch",
+    "volumeZScore", "volumeAtrRatio", "fvgBullish", "fvgBearish", "fvgSizeAtrNorm",
+    "bodySizePerc", "upperWickPerc", "lowerWickPerc", "rangeExp", "logReturn",
+    "rollingVolatility", "rollingVolatilityAtrNorm", "rollingVolatilitySlope",
+]
+
+TIME_FEATURES = ["hour_sin", "hour_cos", "dayOfWeek", "sessionLondon", "sessionNY"]
+
+FEATURE_COLUMNS = [f"{name}_{tf}" for tf in TIMEFRAMES for name in TIMEFRAME_FEATURES] + TIME_FEATURES
+
+# Elenco dei modelli addestrati prima della revisione delle feature
+FEATURE_COLUMNS_LEGACY = [
     "open_m5","close_m5","high_m5","low_m5","volume_m5",
     "sma20_m5","sma50_m5","ema20_m5","ema50_m5","ema100_m5","ema200_m5",
     "bbands20_m5","rsi14_m5","atr14_m5","macdNorm_m5","slopeEma_m5",
@@ -23,3 +41,27 @@ FEATURE_COLUMNS = [
     "lowerWickPerc_h1","rangeExp_h1","logReturn_h1","rollingVolatility_h1",
     "rollingVolatilityAtrNorm_h1","rollingVolatilitySlope_h1"
 ]
+
+
+def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    # Nel DB le colonne sono TEXT, serve la conversione numerica
+    for tf in TIMEFRAMES:
+        for name in ("atr14", "slopeEma", "distanceEma"):
+            df[f"{name}_{tf}"] = pd.to_numeric(df[f"{name}_{tf}"], errors="coerce")
+
+        atr = df[f"atr14_{tf}"].replace(0, np.nan)
+        df[f"slopeEmaAtr_{tf}"] = df[f"slopeEma_{tf}"] / atr
+        df[f"distanceEmaAtr_{tf}"] = df[f"distanceEma_{tf}"] / atr
+
+    ts = pd.to_datetime(df["timestamp_m5"], utc=True)
+    hour = ts.dt.hour + ts.dt.minute / 60
+    df["hour_sin"] = np.sin(2 * np.pi * hour / 24)
+    df["hour_cos"] = np.cos(2 * np.pi * hour / 24)
+    df["dayOfWeek"] = ts.dt.dayofweek
+    # Orari UTC approssimati, senza correzione per l'ora legale
+    df["sessionLondon"] = ((ts.dt.hour >= 7) & (ts.dt.hour < 16)).astype(int)
+    df["sessionNY"] = ((ts.dt.hour >= 12) & (ts.dt.hour < 21)).astype(int)
+
+    return df

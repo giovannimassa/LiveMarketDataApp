@@ -2,6 +2,7 @@ import sqlite3
 import time
 import lightgbm as lgb
 import numpy as np
+import pandas as pd
 import os
 import sys
 from datetime import datetime, timezone
@@ -13,7 +14,7 @@ SHARED_DIR = os.path.join(REPO_ROOT, "ml", "shared")
 if SHARED_DIR not in sys.path:
     sys.path.insert(0, SHARED_DIR)
 
-from features import FEATURE_COLUMNS
+from features import FEATURE_COLUMNS, add_derived_features
 
 DB_PATH = os.path.join(REPO_ROOT, "database", "eurusd-data.db")
 AGGREGATION_DATA_TABLE = "aggregationData"
@@ -38,6 +39,11 @@ T_SHORT_ATR = 0.20
 model_long = lgb.Booster(model_file=MODEL_LONG_ATR_PATH)
 model_short = lgb.Booster(model_file=MODEL_SHORT_ATR_PATH)
 
+for _name, _model in (("long", model_long), ("short", model_short)):
+    if _model.num_feature() != len(FEATURE_COLUMNS):
+        raise RuntimeError(
+            f"Il modello {_name} usa {_model.num_feature()} feature, FEATURE_COLUMNS ne ha {len(FEATURE_COLUMNS)}: riaddestrare i modelli"
+        )
 # ============================================================
 # Ensemble ATR-only
 # ============================================================
@@ -129,7 +135,8 @@ def main():
                 #print(f"Nuovo dato live disponibile ----> {json.dumps(row_dict, ensure_ascii=False)}")
 
                 # Build feature vector
-                x = np.array([[row_dict[col] for col in FEATURE_COLUMNS]])
+                x = add_derived_features(pd.DataFrame([row_dict]))[FEATURE_COLUMNS] \
+                    .apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
 
                 # Predict
                 signal, pLong, pShort = ensemble_signal(x)

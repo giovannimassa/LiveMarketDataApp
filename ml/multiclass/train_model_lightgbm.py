@@ -22,7 +22,7 @@ SHARED_DIR = os.path.join(REPO_ROOT, "ml", "shared")
 if SHARED_DIR not in sys.path:
     sys.path.insert(0, SHARED_DIR)
 
-from features import FEATURE_COLUMNS
+from features import FEATURE_COLUMNS_LEGACY as FEATURE_COLUMNS
 
 # Funzione di thresholding per predizioni
 def apply_thresholding(probabilities, t_buy=0.55, t_sell=0.55):

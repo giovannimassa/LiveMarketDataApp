@@ -14,7 +14,7 @@ SHARED_DIR = os.path.join(REPO_ROOT, "ml", "shared")
 if SHARED_DIR not in sys.path:
     sys.path.insert(0, SHARED_DIR)
 
-from features import FEATURE_COLUMNS
+from features import FEATURE_COLUMNS, add_derived_features
 
 # ============================================================
 # CONFIG
@@ -230,7 +230,7 @@ def analyze_by_group(trades, key):
 if __name__ == "__main__":
     start_time = time.time()
 
-    df = pd.read_csv(CSV_TEST)
+    df = add_derived_features(pd.read_csv(CSV_TEST))
     df["timestamp_m5"] = pd.to_datetime(df["timestamp_m5"])
     df["year"] = df["timestamp_m5"].dt.year
     df["month"] = df["timestamp_m5"].dt.month
