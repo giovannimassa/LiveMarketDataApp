@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pandas as pd
 
@@ -41,6 +42,39 @@ FEATURE_COLUMNS_LEGACY = [
     "lowerWickPerc_h1","rangeExp_h1","logReturn_h1","rollingVolatility_h1",
     "rollingVolatilityAtrNorm_h1","rollingVolatilitySlope_h1"
 ]
+
+# Registro degli elenchi di feature selezionabili da CLI/env (vedi get_feature_columns)
+FEATURE_SETS = {
+    "new": FEATURE_COLUMNS,
+    "legacy": FEATURE_COLUMNS_LEGACY,
+}
+
+
+def get_feature_columns(name: str | None = None) -> list:
+    """Risolve l'elenco feature da usare: argomento esplicito, poi env FEATURE_SET, poi 'new'."""
+    name = name or os.environ.get("FEATURE_SET", "new")
+    if name not in FEATURE_SETS:
+        raise ValueError(f"FEATURE_SET sconosciuto: {name!r}. Valori validi: {list(FEATURE_SETS)}")
+    return FEATURE_SETS[name]
+
+
+def model_suffix(name: str | None = None) -> str:
+    """Suffisso per i file modello: vuoto per il set 'new', altrimenti '_<nome>'."""
+    name = name or os.environ.get("FEATURE_SET", "new")
+    return "" if name == "new" else f"_{name}"
+
+
+def add_true_atr(df: pd.DataFrame, period: int = 14, tf: str = "m5") -> pd.DataFrame:
+    """Aggiunge atr_true_<tf>: ATR di Wilder ricalcolato dagli OHLC, perche' atr14 nel dataset e' gonfiato."""
+    df = df.copy()
+    prev_close = df[f"close_{tf}"].shift(1)
+    tr = np.maximum(
+        df[f"high_{tf}"] - df[f"low_{tf}"],
+        np.maximum((df[f"high_{tf}"] - prev_close).abs(), (df[f"low_{tf}"] - prev_close).abs()),
+    )
+    tr.iloc[0] = df[f"high_{tf}"].iloc[0] - df[f"low_{tf}"].iloc[0]
+    df[f"atr_true_{tf}"] = tr.ewm(alpha=1 / period, adjust=False).mean()
+    return df
 
 
 def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:

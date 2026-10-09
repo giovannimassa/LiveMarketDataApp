@@ -1,3 +1,4 @@
+import argparse
 import pandas as pd
 import numpy as np
 import lightgbm as lgb
@@ -14,15 +15,32 @@ SHARED_DIR = os.path.join(REPO_ROOT, "ml", "shared")
 if SHARED_DIR not in sys.path:
     sys.path.insert(0, SHARED_DIR)
 
-from features import FEATURE_COLUMNS, add_derived_features
+from features import get_feature_columns, model_suffix, add_derived_features
+
+_parser = argparse.ArgumentParser()
+_parser.add_argument(
+    "--feature-set",
+    choices=["new", "legacy"],
+    default=os.environ.get("FEATURE_SET", "new"),
+    help="Elenco di feature usato dai modelli da testare (default: new)",
+)
+_parser.add_argument(
+    "--model-suffix",
+    default=None,
+    help="Suffisso dei file modello da caricare (default: quello legato al feature-set, es. _legacy)",
+)
+_args, _ = _parser.parse_known_args()
+
+FEATURE_COLUMNS = get_feature_columns(_args.feature_set)
+_suffix = _args.model_suffix if _args.model_suffix is not None else model_suffix(_args.feature_set)
 
 # ============================================================
 # CONFIG
 # ============================================================
 CSV_TEST = ML_DIR / "eurusd_test.csv"
 
-MODEL_LONG_ATR_PATH = SCRIPT_DIR / "model_long_atr.txt"
-MODEL_SHORT_ATR_PATH = SCRIPT_DIR / "model_short_atr.txt"
+MODEL_LONG_ATR_PATH = SCRIPT_DIR / f"model_long_atr{_suffix}.txt"
+MODEL_SHORT_ATR_PATH = SCRIPT_DIR / f"model_short_atr{_suffix}.txt"
 
 T_LONG_ATR = 0.20
 T_SHORT_ATR = 0.20
@@ -113,36 +131,40 @@ def run_backtest(df):
 
         if direction == 1:
             tp_hits = np.where(high_slice >= entry_price + tp)[0]
-            if len(tp_hits) > 0:
-                exit_index = j + tp_hits[0]
+            sl_hits = np.where(low_slice <= entry_price - sl)[0]
+            tp_idx = tp_hits[0] if len(tp_hits) > 0 else None
+            sl_idx = sl_hits[0] if len(sl_hits) > 0 else None
+
+            if tp_idx is not None and (sl_idx is None or tp_idx < sl_idx):
+                exit_index = j + tp_idx
                 exit_price = entry_price + tp
                 exit_reason = "TP"
+            elif sl_idx is not None:
+                exit_index = j + sl_idx
+                exit_price = entry_price - sl
+                exit_reason = "SL"
             else:
-                sl_hits = np.where(low_slice <= entry_price - sl)[0]
-                if len(sl_hits) > 0:
-                    exit_index = j + sl_hits[0]
-                    exit_price = entry_price - sl
-                    exit_reason = "SL"
-                else:
-                    exit_index = max_j - 1
-                    exit_price = prices[exit_index]
-                    exit_reason = "TIME"
+                exit_index = max_j - 1
+                exit_price = prices[exit_index]
+                exit_reason = "TIME"
         else:
             tp_hits = np.where(low_slice <= entry_price - tp)[0]
-            if len(tp_hits) > 0:
-                exit_index = j + tp_hits[0]
+            sl_hits = np.where(high_slice >= entry_price + sl)[0]
+            tp_idx = tp_hits[0] if len(tp_hits) > 0 else None
+            sl_idx = sl_hits[0] if len(sl_hits) > 0 else None
+
+            if tp_idx is not None and (sl_idx is None or tp_idx < sl_idx):
+                exit_index = j + tp_idx
                 exit_price = entry_price - tp
                 exit_reason = "TP"
+            elif sl_idx is not None:
+                exit_index = j + sl_idx
+                exit_price = entry_price + sl
+                exit_reason = "SL"
             else:
-                sl_hits = np.where(high_slice >= entry_price + sl)[0]
-                if len(sl_hits) > 0:
-                    exit_index = j + sl_hits[0]
-                    exit_price = entry_price + sl
-                    exit_reason = "SL"
-                else:
-                    exit_index = max_j - 1
-                    exit_price = prices[exit_index]
-                    exit_reason = "TIME"
+                exit_index = max_j - 1
+                exit_price = prices[exit_index]
+                exit_reason = "TIME"
 
         pnl = exit_price - entry_price if direction == 1 else entry_price - exit_price
         equity += pnl
@@ -261,4 +283,4 @@ if __name__ == "__main__":
     print(analyze_by_group(trades, "entry_weekday"))
 
     elapsed = time.time() - start_time
-    print(f"\n⏱️ Tempo totale: {elapsed:.2f}s")
+    print(f"\nTempo totale: {elapsed:.2f}s")

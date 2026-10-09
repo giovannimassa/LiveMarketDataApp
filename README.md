@@ -15,11 +15,14 @@ La classe **AppConfig** contiene le configurazione di tutta l'applicazione come 
 # Machine Learning (ML)
 ## Descrizione
 Contiene gli script in Python per la creazione dei modelli di ML.
+Pipeline, strumenti, bug corretti, risultati degli esperimenti e prossimi passi: vedi [docs/ml-pipeline.md](docs/ml-pipeline.md).
 
 # Python Backtest Engine
 
 # Python Signal Engine
 ## Descrizione
+**Stato:** il servizio si ferma all'avvio finché non viene addestrato un modello valido per le feature correnti (vedi [docs/ml-pipeline.md](docs/ml-pipeline.md), sezione Avvertenze).
+
 Il servizio che genera il segnale in base all'ultimo dato live dato in pasto al modello ML generato.
 Principali caratteristiche:
 - rimane in ascolto della tabella SQLite popolata dal tuo servizio Node.js

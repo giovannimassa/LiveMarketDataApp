@@ -1,10 +1,12 @@
-import pandas as pd
-import numpy as np
-import lightgbm as lgb
-import time
+import argparse
 import os
 import sys
+import time
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import lightgbm as lgb
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ML_DIR = SCRIPT_DIR.parent
@@ -14,263 +16,203 @@ SHARED_DIR = os.path.join(REPO_ROOT, "ml", "shared")
 if SHARED_DIR not in sys.path:
     sys.path.insert(0, SHARED_DIR)
 
-from features import FEATURE_COLUMNS, add_derived_features
+from features import get_feature_columns, model_suffix, add_derived_features, add_true_atr
 
-# ============================================================
-# CONFIG
-# ============================================================
-CSV_TEST = ML_DIR / "eurusd_test.csv"
-
-MODEL_LONG_ATR_PATH = SCRIPT_DIR / "model_long_atr.txt"
-MODEL_SHORT_ATR_PATH = SCRIPT_DIR / "model_short_atr.txt"
-
-# Threshold ottimali trovati nei test
-T_LONG_ATR = 0.20
-T_SHORT_ATR = 0.20
-
-# Parametri backtest
 N_MAX_BARS = 24
 ATR_SL_MULT = 1.0
 ATR_TP_MULT = 2.0
+PIP = 0.0001
 
-# ============================================================
-# CARICAMENTO MODELLI
-# ============================================================
-model_long_atr = lgb.Booster(model_file=MODEL_LONG_ATR_PATH)
-model_short_atr = lgb.Booster(model_file=MODEL_SHORT_ATR_PATH)
+# Filtro ore/giorni storico di backtest.py (attivabile con --session-filter)
+BAD_HOURS = {0, 3, 5, 12, 17, 18, 19, 20, 21, 22, 23}
+BAD_WEEKDAYS = {2, 6}
 
-# ============================================================
-# ENSEMBLE ATR‑ONLY
-# ============================================================
-def ensemble_atr_signal(x_row):
-    pLongAtr = float(model_long_atr.predict(x_row)[0])
-    pShortAtr = float(model_short_atr.predict(x_row)[0])
+# Frazioni di barre con segnale testate nella scelta della soglia
+SWEEP_QUANTILES = [0.80, 0.85, 0.90, 0.95, 0.975, 0.99, 0.995, 0.999]
 
-    long_signal = pLongAtr > T_LONG_ATR
-    short_signal = pShortAtr > T_SHORT_ATR
 
-    # BUY
-    if long_signal and not short_signal:
-        return 1, pLongAtr, pShortAtr
+def compute_direction(p_long, p_short, t_long, t_short):
+    long_sig = p_long > t_long
+    short_sig = p_short > t_short
+    conflict = np.where(p_long > p_short, 1, -1)
+    return np.where(long_sig & ~short_sig, 1,
+           np.where(short_sig & ~long_sig, -1,
+           np.where(long_sig & short_sig, conflict, 0)))
 
-    # SELL
-    if short_signal and not long_signal:
-        return -1, pLongAtr, pShortAtr
 
-    # Conflitto → vince il più forte
-    if long_signal and short_signal:
-        if pLongAtr > pShortAtr:
-            return 1, pLongAtr, pShortAtr
-        else:
-            return -1, pLongAtr, pShortAtr
-
-    # HOLD
-    return 0, pLongAtr, pShortAtr
-
-# ============================================================
-# BACKTEST ENGINE (OTTIMIZZATO)
-# ============================================================
-def run_backtest(df):
-    equity = 0.0
-    trades = []
-
-    prices = df["close_m5"].values
-    atr = df["atr14_m5"].values
-    highs = df["high_m5"].values
-    lows = df["low_m5"].values
-
-    i = 0
+def simulate(df, p_long, p_short, t_long, t_short, spread=0.0, entry="next-open",
+             session_filter=False, sl_mult=ATR_SL_MULT, tp_mult=ATR_TP_MULT, max_bars=N_MAX_BARS,
+             atr_col="atr14_m5", signal_mask=None):
+    """Un solo trade alla volta. Con entry='next-open' l'ingresso e' all'open della barra
+    successiva al segnale; con 'close' al close della barra del segnale (ottimistico).
+    TP/SL: vince la barriera toccata per prima, a parita' di barra vince SL.
+    `spread` e' il costo round-trip in unita' di prezzo.
+    `signal_mask` (bool per barra) limita le barre da cui puo' partire un segnale."""
+    ts = pd.to_datetime(df["timestamp_m5"], utc=True)
+    opens = df["open_m5"].to_numpy(dtype=float)
+    highs = df["high_m5"].to_numpy(dtype=float)
+    lows = df["low_m5"].to_numpy(dtype=float)
+    closes = df["close_m5"].to_numpy(dtype=float)
+    atr = pd.to_numeric(df[atr_col], errors="coerce").to_numpy(dtype=float)
     n = len(df)
 
-    while i < n:
-        x = df.iloc[i:i+1][FEATURE_COLUMNS].values
-        signal, pLongAtr, pShortAtr = ensemble_atr_signal(x)
+    direction = compute_direction(p_long, p_short, t_long, t_short)
+    if signal_mask is not None:
+        direction = np.where(signal_mask, direction, 0)
+    if session_filter:
+        bad = ts.dt.hour.isin(BAD_HOURS).to_numpy() | ts.dt.weekday.isin(BAD_WEEKDAYS).to_numpy()
+        direction = np.where(bad, 0, direction)
 
-        if signal == 0:
-            i += 1
+    cands = np.flatnonzero(direction != 0)
+    rows = []
+    pos = 0
+    while pos < len(cands):
+        i = int(cands[pos])
+        start = i + 1
+        atr_val = atr[i]
+        if start >= n:
+            break
+        if not np.isfinite(atr_val) or atr_val <= 0:
+            pos += 1
             continue
 
-        entry_price = prices[i]
-        atr_val = atr[i]
-        sl = ATR_SL_MULT * atr_val
-        tp = ATR_TP_MULT * atr_val
+        d = int(direction[i])
+        entry_price = opens[start] if entry == "next-open" else closes[i]
+        sl = sl_mult * atr_val
+        tp = tp_mult * atr_val
 
-        direction = signal
-        entry_index = i
+        end = min(start + max_bars, n)
+        h = highs[start:end]
+        l = lows[start:end]
+        if d == 1:
+            tp_hits = np.flatnonzero(h >= entry_price + tp)
+            sl_hits = np.flatnonzero(l <= entry_price - sl)
+        else:
+            tp_hits = np.flatnonzero(l <= entry_price - tp)
+            sl_hits = np.flatnonzero(h >= entry_price + sl)
 
-        exit_price = None
-        exit_reason = None
-        exit_index = i + 1
+        size = len(h)
+        tp_k = tp_hits[0] if tp_hits.size else size
+        sl_k = sl_hits[0] if sl_hits.size else size
 
-        # Ricerca efficiente dell'exit usando vettorizzazione
-        j = i + 1
-        max_j = min(i + N_MAX_BARS + 1, n)
-        
-        if direction == 1:  # BUY
-            high_slice = highs[j:max_j]
-            low_slice = lows[j:max_j]
-            
-            # TP hit
-            tp_hits = np.where(high_slice >= entry_price + tp)[0]
-            if len(tp_hits) > 0:
-                exit_index = j + tp_hits[0]
-                exit_price = entry_price + tp
-                exit_reason = "TP"
-            else:
-                # SL hit
-                sl_hits = np.where(low_slice <= entry_price - sl)[0]
-                if len(sl_hits) > 0:
-                    exit_index = j + sl_hits[0]
-                    exit_price = entry_price - sl
-                    exit_reason = "SL"
-                else:
-                    exit_index = max_j - 1
-                    exit_price = prices[min(max_j - 1, n - 1)]
-                    exit_reason = "TIME"
-        else:  # SELL
-            high_slice = highs[j:max_j]
-            low_slice = lows[j:max_j]
-            
-            # TP hit
-            tp_hits = np.where(low_slice <= entry_price - tp)[0]
-            if len(tp_hits) > 0:
-                exit_index = j + tp_hits[0]
-                exit_price = entry_price - tp
-                exit_reason = "TP"
-            else:
-                # SL hit
-                sl_hits = np.where(high_slice >= entry_price + sl)[0]
-                if len(sl_hits) > 0:
-                    exit_index = j + sl_hits[0]
-                    exit_price = entry_price + sl
-                    exit_reason = "SL"
-                else:
-                    exit_index = max_j - 1
-                    exit_price = prices[min(max_j - 1, n - 1)]
-                    exit_reason = "TIME"
+        if tp_k < sl_k:
+            exit_k, exit_price, reason = tp_k, entry_price + d * tp, "TP"
+        elif sl_k < size:
+            exit_k, exit_price, reason = sl_k, entry_price - d * sl, "SL"
+        else:
+            exit_k, exit_price, reason = size - 1, closes[start + size - 1], "TIME"
 
-        pnl = exit_price - entry_price if direction == 1 else entry_price - exit_price
-        equity += pnl
-
-        exit_idx = min(exit_index, n - 1)
-
-        trades.append({
-            "entry_index": entry_index,
-            "exit_index": exit_idx,
-            "direction": direction,
-            "entry_price": entry_price,
-            "exit_price": exit_price,
-            "pnl": pnl,
-            "reason": exit_reason,
-            "entry_time": df["timestamp_m5"].iloc[entry_index],
-            "exit_time": df["timestamp_m5"].iloc[exit_idx],
-            "entry_year": df["year"].iloc[entry_index],
-            "entry_month": df["month"].iloc[entry_index],
-            "entry_hour": df["hour"].iloc[entry_index],
-            "pLongAtr": pLongAtr,
-            "pShortAtr": pShortAtr
+        exit_idx = start + exit_k
+        gross = d * (exit_price - entry_price)
+        rows.append({
+            "entry_index": i, "exit_index": exit_idx, "direction": d,
+            "entry_price": entry_price, "exit_price": exit_price,
+            "gross": gross, "pnl": gross - spread, "reason": reason,
+            "entry_time": ts.iloc[i], "entry_year": ts.iloc[i].year,
+            "pLong": p_long[i], "pShort": p_short[i],
         })
+        pos = int(np.searchsorted(cands, exit_idx, side="right"))
 
-        i = exit_idx + 1
+    return pd.DataFrame(rows)
 
-    return equity, trades
 
-# ============================================================
-# ANALISI TRADE
-# ============================================================
-def analyze_trades(trades):
-    pnls = np.array([t["pnl"] for t in trades])
-    wins = pnls[pnls > 0]
-    losses = pnls[pnls <= 0]
-
-    total_pnl = pnls.sum()
-    winrate = len(wins) / len(trades) if len(trades) > 0 else 0
-    avg_win = wins.mean() if len(wins) else 0
-    avg_loss = losses.mean() if len(losses) else 0
-    profit_factor = wins.sum() / abs(losses.sum()) if len(losses) and losses.sum() != 0 else np.inf
-
-    equity_curve = pnls.cumsum()
-    peak = np.maximum.accumulate(equity_curve)
-    drawdown = equity_curve - peak
-    max_dd = drawdown.min() if len(drawdown) > 0 else 0
-
+def summarize(trades):
+    if trades.empty:
+        return {"num_trades": 0, "gross_pnl": 0.0, "net_pnl": 0.0, "winrate": 0.0,
+                "profit_factor": 0.0, "max_drawdown": 0.0, "avg_net_pips": 0.0}
+    pnl = trades["pnl"].to_numpy()
+    wins, losses = pnl[pnl > 0], pnl[pnl <= 0]
+    curve = pnl.cumsum()
     return {
-        "num_trades": len(trades),
-        "total_pnl": total_pnl,
-        "winrate": winrate,
-        "avg_win": avg_win,
-        "avg_loss": avg_loss,
-        "profit_factor": profit_factor,
-        "max_drawdown": max_dd,
-        "equity_curve": equity_curve
+        "num_trades": len(pnl),
+        "gross_pnl": float(trades["gross"].sum()),
+        "net_pnl": float(pnl.sum()),
+        "winrate": len(wins) / len(pnl),
+        "profit_factor": wins.sum() / abs(losses.sum()) if losses.sum() != 0 else np.inf,
+        "max_drawdown": float((curve - np.maximum.accumulate(curve)).min()),
+        "avg_net_pips": float(pnl.mean() / PIP),
     }
 
-# ============================================================
-# ANALISI PER ANNO / MESE / ORA
-# ============================================================
-def analyze_by_group(trades, key):
-    df = pd.DataFrame(trades)
-    groups = df.groupby(key)
 
-    rows = []
-    for k, g in groups:
-        pnls = g["pnl"].values
-        wins = pnls[pnls > 0]
-        losses = pnls[pnls <= 0]
+def select_thresholds(df, p_long, p_short, spread, min_trades=100, **sim_kwargs):
+    """Sceglie la frazione di barre con segnale che massimizza il PnL netto sul set passato.
+    Le soglie sono i quantili delle probabilita' di ciascun modello su questo stesso set."""
+    best, table = None, []
+    mask = sim_kwargs.get("signal_mask")
+    q_long, q_short = (p_long, p_short) if mask is None else (p_long[mask], p_short[mask])
+    for q in SWEEP_QUANTILES:
+        t_long, t_short = float(np.quantile(q_long, q)), float(np.quantile(q_short, q))
+        stats = summarize(simulate(df, p_long, p_short, t_long, t_short, spread=spread, **sim_kwargs))
+        table.append({"quantile": q, "t_long": t_long, "t_short": t_short, **stats})
+        if stats["num_trades"] >= min_trades and (best is None or stats["net_pnl"] > best["net_pnl"]):
+            best = table[-1]
+    if best is None:
+        best = max(table, key=lambda r: r["num_trades"])
+    return best, pd.DataFrame(table)
 
-        profit_factor = wins.sum() / abs(losses.sum()) if len(losses) and losses.sum() != 0 else np.inf
-        winrate = len(wins) / len(pnls)
-        avg_pnl = pnls.mean()
 
-        rows.append({
-            key: k,
-            "num_trades": len(pnls),
-            "winrate": winrate,
-            "profit_factor": profit_factor,
-            "avg_pnl": avg_pnl
-        })
+def load_df(path, true_atr=False):
+    df = add_derived_features(pd.read_csv(path))
+    df["timestamp_m5"] = pd.to_datetime(df["timestamp_m5"], utc=True)
+    return add_true_atr(df) if true_atr else df
 
-    return pd.DataFrame(rows).sort_values(key)
 
-# ============================================================
-# MAIN
-# ============================================================
+def print_summary(label, stats, trades):
+    print(f"\n=== {label} ===")
+    print(f"Trade: {stats['num_trades']}  PNL lordo: {stats['gross_pnl']:.5f}  PNL netto: {stats['net_pnl']:.5f}  "
+          f"Pips netti/trade: {stats['avg_net_pips']:.3f}")
+    print(f"Winrate: {stats['winrate']:.3f}  Profit factor: {stats['profit_factor']:.3f}  Max DD: {stats['max_drawdown']:.5f}")
+    if not trades.empty:
+        by_year = trades.groupby("entry_year")["pnl"].agg(
+            num_trades="count", net_pnl="sum",
+            profit_factor=lambda s: s[s > 0].sum() / abs(s[s <= 0].sum()) if (s <= 0).any() and s[s <= 0].sum() != 0 else np.inf)
+        print(by_year)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--feature-set", choices=["new", "legacy"], default=os.environ.get("FEATURE_SET", "new"))
+    parser.add_argument("--model-suffix", default=None, help="Suffisso dei file modello (default: legato al feature-set)")
+    parser.add_argument("--spread-pips", type=float, default=0.8, help="Costo round-trip in pip (default 0.8)")
+    parser.add_argument("--entry", choices=["next-open", "close"], default="next-open")
+    parser.add_argument("--t-long", type=float, default=0.20)
+    parser.add_argument("--t-short", type=float, default=0.20)
+    parser.add_argument("--select-threshold", action="store_true",
+                        help="Sceglie la soglia sul validation set (PnL netto) e la applica al test")
+    parser.add_argument("--min-trades", type=int, default=100, help="Trade minimi per accettare una soglia")
+    parser.add_argument("--session-filter", action="store_true", help="Esclude le ore/giorni di BAD_HOURS/BAD_WEEKDAYS")
+    parser.add_argument("--true-atr", action="store_true", help="Usa per SL/TP l'ATR ricalcolato dagli OHLC (atr14 del dataset e' gonfiato)")
+    args = parser.parse_args()
+
+    start = time.time()
+    suffix = args.model_suffix if args.model_suffix is not None else model_suffix(args.feature_set)
+    cols = get_feature_columns(args.feature_set)
+    model_long = lgb.Booster(model_file=str(SCRIPT_DIR / f"model_long_atr{suffix}.txt"))
+    model_short = lgb.Booster(model_file=str(SCRIPT_DIR / f"model_short_atr{suffix}.txt"))
+    spread = args.spread_pips * PIP
+    kw = {"entry": args.entry, "session_filter": args.session_filter}
+    if args.true_atr:
+        kw["atr_col"] = "atr_true_m5"
+
+    t_long, t_short = args.t_long, args.t_short
+    if args.select_threshold:
+        valid = load_df(ML_DIR / "eurusd_valid.csv", args.true_atr)
+        pv_long = model_long.predict(valid[cols].values)
+        pv_short = model_short.predict(valid[cols].values)
+        best, table = select_thresholds(valid, pv_long, pv_short, spread, min_trades=args.min_trades, **kw)
+        print("=== SCELTA SOGLIA SU VALIDATION ===")
+        print(table.to_string(index=False))
+        t_long, t_short = best["t_long"], best["t_short"]
+        print(f"Scelta: quantile={best['quantile']} t_long={t_long:.4f} t_short={t_short:.4f}")
+
+    test = load_df(ML_DIR / "eurusd_test.csv", args.true_atr)
+    p_long = model_long.predict(test[cols].values)
+    p_short = model_short.predict(test[cols].values)
+    trades = simulate(test, p_long, p_short, t_long, t_short, spread=spread, **kw)
+    print_summary(f"TEST (spread {args.spread_pips} pip, entry {args.entry}, t_long={t_long:.4f}, t_short={t_short:.4f})",
+                  summarize(trades), trades)
+    print(f"\nTempo totale: {time.time() - start:.1f}s")
+
+
 if __name__ == "__main__":
-    start_time = time.time()
-    
-    print("Loading data...")
-    df = add_derived_features(pd.read_csv(CSV_TEST))
-    df["timestamp_m5"] = pd.to_datetime(df["timestamp_m5"])
-    df["year"] = df["timestamp_m5"].dt.year
-    df["month"] = df["timestamp_m5"].dt.month
-    df["hour"] = df["timestamp_m5"].dt.hour
-
-    print(f"Data loaded: {len(df)} rows")
-    print("Running backtest...")
-    equity, trades = run_backtest(df)
-    print(f"Backtest completed: {len(trades)} trades")
-    
-    stats = analyze_trades(trades)
-
-    print("\n=== RISULTATI BACKTEST ENSEMBLE ATR ===")
-    print("Numero trade:", stats["num_trades"])
-    print("PNL totale:", stats["total_pnl"])
-    print("Winrate:", stats["winrate"])
-    print("Profit factor:", stats["profit_factor"])
-    print("Max drawdown:", stats["max_drawdown"])
-
-    print("\n=== ANALISI PER ANNO ===")
-    print(analyze_by_group(trades, "entry_year"))
-
-    print("\n=== ANALISI PER MESE ===")
-    print(analyze_by_group(trades, "entry_month"))
-
-    print("\n=== ANALISI PER ORA ===")
-    print(analyze_by_group(trades, "entry_hour"))
-    
-    # Calcolo del tempo totale
-    end_time = time.time()
-    elapsed_seconds = int(end_time - start_time)
-    minutes = elapsed_seconds // 60
-    seconds = elapsed_seconds % 60
-    print(f"\n⏱️  Tempo totale di esecuzione: {minutes}m {seconds}s")
+    main()

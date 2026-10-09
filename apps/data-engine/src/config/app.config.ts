@@ -22,7 +22,7 @@ export class AppConfig {
         const __filename = fileURLToPath(import.meta.url);
         const __dirname = path.dirname(__filename);
 
-        this._databasePath = path.join(__dirname, '..', '..', '..', '..', 'database', 'eurusd-data.db');
+        this._databasePath = process.env.DATABASE_PATH ?? path.join(__dirname, '..', '..', '..', '..', 'database', 'eurusd-data.db');
 
         if (!fs.existsSync(this._databasePath)) {
             throw new Error(`Database non trovato: ${this._databasePath}`);

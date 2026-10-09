@@ -324,6 +324,11 @@ export class DatabaseService extends DatabaseServiceBase {
       this.db.exec(sql);
   }
 
+  // Esegue fn in un'unica transazione: molto piu' veloce per inserimenti massivi
+  runInTransaction<T>(fn: () => T): T {
+    return this.db.transaction(fn)();
+  }
+
   saveMarketData(timeframe: Timeframe, row: MarketItem) {
     
     const sql = `

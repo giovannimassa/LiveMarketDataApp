@@ -14,15 +14,19 @@ SHARED_DIR = os.path.join(REPO_ROOT, "ml", "shared")
 if SHARED_DIR not in sys.path:
     sys.path.insert(0, SHARED_DIR)
 
-from features import FEATURE_COLUMNS, add_derived_features
+from features import get_feature_columns, model_suffix, add_derived_features
+
+FEATURE_SET = os.environ.get("FEATURE_SET", "new")
+FEATURE_COLUMNS = get_feature_columns(FEATURE_SET)
+_suffix = model_suffix(FEATURE_SET)
 
 DB_PATH = os.path.join(REPO_ROOT, "database", "eurusd-data.db")
 AGGREGATION_DATA_TABLE = "aggregationData"
 TRADES_TABLE = "trades"
 
 # Resolve model paths relative to this script file so PM2/current working dir won't break them
-MODEL_LONG_ATR_PATH = os.path.join(SCRIPT_DIR, "model_long_atr.txt")
-MODEL_SHORT_ATR_PATH = os.path.join(SCRIPT_DIR, "model_short_atr.txt")
+MODEL_LONG_ATR_PATH = os.path.join(SCRIPT_DIR, f"model_long_atr{_suffix}.txt")
+MODEL_SHORT_ATR_PATH = os.path.join(SCRIPT_DIR, f"model_short_atr{_suffix}.txt")
 
 # Fail early with a clear message if model files are missing
 if not os.path.exists(MODEL_LONG_ATR_PATH):

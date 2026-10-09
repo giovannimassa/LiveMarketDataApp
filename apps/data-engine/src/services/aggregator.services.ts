@@ -107,7 +107,7 @@ export class AggregatorService {
         }
     }
 
-    private aggregatoToCSV(m5: MarketItemString[], m15: MarketItemString[], h1: MarketItemString[], aggregationDataFor: AggregationDataFor) {
+    private aggregatoToCSV(m5: MarketItemString[], m15: MarketItemString[], h1: MarketItemString[], aggregationDataFor: AggregationDataFor, outputPath: string) {
         // Percorso del file CSV
         // const outputPath = path.join(__dirname, this.OUTPUT_CSV);
 
@@ -126,7 +126,7 @@ export class AggregatorService {
         }
 
         // Creiamo lo stream di scrittura
-        const writableStream = fs.createWriteStream(this.OUTPUT_CSV);
+        const writableStream = fs.createWriteStream(outputPath);
         // Configurazione di csv-stringify
         const stringifier = stringify({
             header: true // aggiunge l'intestazione
@@ -143,10 +143,12 @@ export class AggregatorService {
         // Colleghiamo lo stringifier allo stream di scrittura PRIMA di scrivere i dati
         stringifier.pipe(writableStream);
 
-        let lableIndex = 0;
+        // Le label sono calcolate su tutte le righe m5: l'indice va letto dalla riga m5 anche quando la riga viene scartata
+        let m5Index = -1;
         let rowCountAvailable = 0;
         let rowCountUnavailable = 0;
         for (const row5 of m5) {
+            m5Index++;
             
             const item = this.aggregateTimeframes(row5, m15, h1);
             if (item === null)
@@ -162,8 +164,8 @@ export class AggregatorService {
             };
 
             if (labelsData1 !== null && labelsData2 !== null) {
-                const label1 = labelsData1[lableIndex];
-                const label2 = labelsData2[lableIndex];
+                const label1 = labelsData1[m5Index];
+                const label2 = labelsData2[m5Index];
                 completeItem = {
                     ...completeItem,
                     target_long_1: label1.targetLong.toString(),
@@ -178,7 +180,6 @@ export class AggregatorService {
             }
 
             stringifier.write(completeItem);
-            lableIndex++;
         }
 
         this.logger.info(`Dati disponibili: ${rowCountAvailable}, Dati mancanti: ${rowCountUnavailable}`);
@@ -228,7 +229,7 @@ export class AggregatorService {
         return item;
     }
 
-    aggregate(timestampStart: string, timestampEnd: string, aggregationTo: AggregationTo, aggregationDataFor: AggregationDataFor) {
+    aggregate(timestampStart: string, timestampEnd: string, aggregationTo: AggregationTo, aggregationDataFor: AggregationDataFor, outputPath: string = this.OUTPUT_CSV) {
         const stopwatch = new Stopwatch();
         stopwatch.start();
 
@@ -238,7 +239,7 @@ export class AggregatorService {
 
         switch (aggregationTo) {
             case AggregationTo.CSV:
-                this.aggregatoToCSV(m5, m15, h1, aggregationDataFor);
+                this.aggregatoToCSV(m5, m15, h1, aggregationDataFor, outputPath);
                 break;
             case AggregationTo.DATABASE:
                 this.aggregateToDatabase(m5, m15, h1);

@@ -25,7 +25,8 @@ baseContainer.bind(DatabaseService).toSelf().inSingletonScope();
 baseContainer.bind(Timeframe5minService).toSelf().inSingletonScope();
 baseContainer.bind(Timeframe15minService).toSelf().inSingletonScope();
 baseContainer.bind(Timeframe1HourService).toSelf().inSingletonScope();
-baseContainer.bind(IndicatorService).toSelf().inSingletonScope();
+// Un'istanza per timeframe: lo stato degli indicatori non va condiviso tra m5, m15 e h1
+baseContainer.bind(IndicatorService).toSelf().inTransientScope();
 baseContainer.bind(AggregatorService).toSelf().inSingletonScope();
 baseContainer.bind(LabelClassificationService).toSelf().inSingletonScope();
 
